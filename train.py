@@ -23,8 +23,12 @@ import yaml
 from shutil import copyfile
 from circle_loss import CircleLoss, convert_label_to_similarity
 from instance_loss import InstanceLoss
+import wandb
 
 version =  torch.__version__
+
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] ="0"
 #fp16
 try:
     from apex.fp16_utils import *
@@ -41,7 +45,7 @@ from pytorch_metric_learning import losses, miners #pip install pytorch-metric-l
 parser = argparse.ArgumentParser(description='Training')
 parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
 parser.add_argument('--name',default='ft_ResNet50', type=str, help='output model name')
-parser.add_argument('--data_dir',default='../Market/pytorch',type=str, help='training dir path')
+parser.add_argument('--data_dir',default='/mnt/hdd_data/Dataset/market1501_ss/pytorch',type=str, help='training dir path')
 parser.add_argument('--train_all', action='store_true', help='use all training data' )
 parser.add_argument('--color_jitter', action='store_true', help='use color jitter in training' )
 parser.add_argument('--batchsize', default=32, type=int, help='batchsize')
@@ -85,9 +89,10 @@ for str_id in str_ids:
         gpu_ids.append(gid)
 
 # set gpu ids
-if len(gpu_ids)>0:
-    torch.cuda.set_device(gpu_ids[0])
-    cudnn.benchmark = True
+# if len(gpu_ids)>0:
+#     print(f"GPU : {gpu_ids}")
+#     # torch.cuda.set_device(gpu_ids[0])
+#     cudnn.benchmark = True
 ######################################################################
 # Load Data
 # ---------
@@ -197,6 +202,9 @@ def fliplr(img):
     return img_flip
 
 def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
+    wandb.init(entity = 'panda0728',project = 'Person-ReID')
+    wandb.watch(model,criterion,log="all",log_freq = 5)
+
     since = time.time()
 
     #best_model_wts = model.state_dict()
@@ -220,6 +228,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
         criterion_instance = InstanceLoss(gamma = opt.ins_gamma)
     if opt.sphere:
         criterion_sphere = losses.SphereFaceLoss(num_classes=opt.nclasses, embedding_size=512, margin=4)
+    iter_cnt = 0
     for epoch in range(num_epochs):
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
         print('-' * 10)
@@ -233,8 +242,9 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
 
             running_loss = 0.0
             running_corrects = 0.0
+            iter = len(dataloaders[phase])
             # Iterate over data.
-            for data in dataloaders[phase]:
+            for num_iter, data in enumerate(dataloaders[phase]):
                 # get the inputs
                 inputs, labels = data
                 now_batch_size,c,h,w = inputs.shape
@@ -355,14 +365,23 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                 # statistics
                 if int(version[0])>0 or int(version[2]) > 3: # for the new version like 0.4.0, 0.5.0 and 1.0.0
                     running_loss += loss.item() * now_batch_size
+                    if phase == 'train':    
+                        wandb.log({'Iteration Loss': loss.item(), 'custom_step':num_iter})
+                        if num_iter % 20 == 0  :
+                            print(f'Iteration: {num_iter}/{iter}, Loss: {loss.item()}')
                 else :  # for the old version like 0.3.0 and 0.3.1
                     running_loss += loss.data[0] * now_batch_size
+                    if num_iter % 20 == 0 :
+                        print(f'Iteration: {num_iter}/{iter}, Loss: {loss.item() * now_batch_size}')
                 del loss
                 running_corrects += float(torch.sum(preds == labels.data))
 
             epoch_loss = running_loss / dataset_sizes[phase]
             epoch_acc = running_corrects / dataset_sizes[phase]
-            
+            if phase == 'train' :
+                wandb.log({'Train Loss / Epoch': epoch_loss,'Train Acc / Epoch' : epoch_acc,'custom_step2':epoch})
+            if phase == 'val' : 
+                wandb.log({'Val Loss / Epoch': epoch_loss,'Val Acc / Epoch' : epoch_acc,'custom_step2':epoch})
             print('{} Loss: {:.4f} Acc: {:.4f}'.format(
                 phase, epoch_loss, epoch_acc))
             
@@ -448,10 +467,19 @@ if opt.PCB:
 
 opt.nclasses = len(class_names)
 
-print(model)
+# print(model)
 
 # model to gpu
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print('Device:', device)
+print('Current cuda device:', torch.cuda.current_device())
+print('Count of using GPUs:', torch.cuda.device_count())
+
 model = model.cuda()
+# model.classifier
+
+# model_parallel = nn.DataParallel(model)
+# model_parallel.module.classifier
 
 optim_name = optim.SGD #apex.optimizers.FusedSGD
 if opt.FSGD: # apex is needed

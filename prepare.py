@@ -2,7 +2,7 @@ import os
 from shutil import copyfile
 
 # You only need to change this line to your dataset download path
-download_path = '../Market'
+download_path = '/mnt/hdd_data/Dataset/market1501_ss'
 
 if not os.path.isdir(download_path):
     print('please change the download_path')
