@@ -22,7 +22,7 @@ from dgfolder import DGFolder
 import yaml
 from shutil import copyfile
 from circle_loss import CircleLoss, convert_label_to_similarity
-from instance_loss import InstanceLoss
+from instance_loss import InstanceLoss 
 import wandb
 
 version =  torch.__version__
@@ -252,7 +252,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                     continue
                 #print(inputs.shape)
                 # wrap them in Variable
-                if use_gpu:
+                if use_gpu: 
                     inputs = Variable(inputs.cuda().detach())
                     labels = Variable(labels.cuda().detach())
                 else:
